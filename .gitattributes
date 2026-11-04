@@ -1,2 +1,4 @@
+zarahsense/backend/data/*.pkl filter=lfs diff=lfs merge=lfs -text
+zarahsense/backend/data/*.joblib filter=lfs diff=lfs merge=lfs -text
 zarahsense/backend/data/aqi_model.pkl filter=lfs diff=lfs merge=lfs -text
 zarahsense/backend/data/rf_model.joblib filter=lfs diff=lfs merge=lfs -text
