@@ -25,7 +25,6 @@ PARAMETER_FEATURES = {
     "temperature": "Temp",
     "um003": "Particles_0.3um",
 }
-
 _cache = {}
 _cache_locks = {}
 _cache_lock = threading.Lock()
@@ -65,7 +64,37 @@ def _distance_meters(lat1, lon1, lat2, lon2):
     return 2 * radius * asin(sqrt(a))
 
 
-def _find_location(latitude, longitude):
+def _find_location(latitude, longitude, location_id=None):
+    required = set(PARAMETER_FEATURES)
+    if location_id is not None:
+        payload = _request_json(f"/locations/{location_id}")
+        location = next(
+            (item for item in payload.get("results", []) if str(item.get("id")) == str(location_id)),
+            None,
+        )
+        if location is None:
+            return None
+        sensors = {}
+        for sensor in location.get("sensors", []):
+            parameter = sensor.get("parameter", {}).get("name")
+            if parameter in required and parameter not in sensors:
+                sensors[parameter] = sensor.get("id")
+        if set(sensors) != required:
+            return None
+        coordinates = location.get("coordinates") or {}
+        distance = None
+        if coordinates.get("latitude") is not None and coordinates.get("longitude") is not None:
+            distance = _distance_meters(
+                latitude, longitude, coordinates["latitude"], coordinates["longitude"]
+            )
+        return {
+            "id": location["id"],
+            "name": location.get("name", "OpenAQ station"),
+            "distanceMeters": round(distance, 1) if distance is not None else None,
+            "coordinates": coordinates,
+            "sensors": sensors,
+        }
+
     payload = _request_json(
         "/locations",
         {
@@ -74,7 +103,6 @@ def _find_location(latitude, longitude):
             "limit": 100,
         },
     )
-    required = set(PARAMETER_FEATURES)
     candidates = []
     for location in payload.get("results", []):
         sensors = {}
@@ -99,6 +127,7 @@ def _find_location(latitude, longitude):
         "id": location["id"],
         "name": location.get("name", "OpenAQ station"),
         "distanceMeters": round(distance, 1),
+        "coordinates": location.get("coordinates") or {},
         "sensors": sensors,
     }
 
@@ -123,8 +152,8 @@ def _fetch_sensor_hours(sensor_id, datetime_from):
     return readings
 
 
-def _load_station(latitude, longitude):
-    location = _find_location(latitude, longitude)
+def _load_station(latitude, longitude, location_id=None):
+    location = _find_location(latitude, longitude, location_id)
     if location is None:
         return {
             "location": None,

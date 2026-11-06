@@ -10,7 +10,7 @@ export const STATIONS = [
   { id: 'ttdi', name: 'Taman Tun Dr Ismail', status: 'ok' },
   { id: 'sejati', name: 'Sejati Residences', status: 'ok' },
   { id: 'klcc', name: 'KLCC', status: 'ok' },
-  { id: 'fmhs', name: 'FMHS Serdang', status: 'limited' },
+  { id: 'enviro-exceltech', name: 'ENVIRO EXCELTECH SDN BHD', status: 'ok' },
 ];
 
 function withLabels(points) {
@@ -73,6 +73,10 @@ export async function getAccuracy(stationId, horizon = 1) {
 
 export async function getCorr() {
   return (await http.get('/correlation')).data;
+}
+
+export async function sendChatMessage(message, history = [], adultConfirmed = false) {
+  return (await http.post('/chat', { message, history, adultConfirmed })).data.answer;
 }
 
 export async function getFiles() {

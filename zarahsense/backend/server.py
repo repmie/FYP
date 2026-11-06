@@ -2,19 +2,22 @@ import json
 import logging
 import os
 import threading
+import time
+from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 import joblib
 import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
-from fastapi import APIRouter, FastAPI, HTTPException
+from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from starlette.middleware.cors import CORSMiddleware
 
+from chatbot import ChatProviderError, ChatQuotaError, generate_fyp_answer
 from engine import (DATA, FEATS, WIN, HOUR, load_clean, train_mask, climatology, forecast,
                     pm25_to_aqi, nowcast)
 from openaq import OpenAQError, current_reading, live_status, live_station
@@ -23,8 +26,9 @@ load_dotenv(Path(__file__).parent / ".env")
 logger = logging.getLogger("zarahsense")
 logging.basicConfig(level=logging.INFO)
 
-STATION_IDS = {"FMHS_Serdang": "fmhs", "KLCC": "klcc", "Sejati_Residences": "sejati",
+STATION_IDS = {"ENVIRO_EXCELTECH_SDN_BHD": "enviro-exceltech", "KLCC": "klcc", "Sejati_Residences": "sejati",
                "Setia_Eco_Park": "setia-eco", "Taman_Tun_Dr_Ismail": "ttdi"}
+STATION_DISPLAY_NAMES = {"ENVIRO_EXCELTECH_SDN_BHD": "ENVIRO EXCELTECH SDN BHD"}
 DRIVER_LABELS = {"PM2.5": "Recent PM2.5 readings", "PM1": "Recent PM1 readings", "RH": "Humidity",
                  "Temp": "Temperature", "Particles_0.3um": "PM0.3 particle count"}
 OVERRIDE_KEYS = {"pm1": "PM1", "pm25": "PM2.5", "rh": "RH", "temp": "Temp", "particles": "Particles_0.3um"}
@@ -41,6 +45,8 @@ KAGGLE_MODEL_PATH = DATA / "aqi_model.pkl"
 MODEL_PATH = KAGGLE_MODEL_PATH if KAGGLE_MODEL_PATH.exists() else DATA / "rf_model.joblib"
 _model = {"m": None}
 _lock = threading.Lock()
+_chat_requests = defaultdict(deque)
+_chat_lock = threading.Lock()
 
 
 def model():
@@ -77,7 +83,8 @@ def build_station(name):
     info = next((s for s in META["stations"] if s["station"] == name), {})
     return {
         "id": STATION_IDS.get(name, name.lower().replace("_", "-")), "key": name,
-        "name": name.replace("_", " "), "lat": info.get("latitude"), "lon": info.get("longitude"),
+        "name": STATION_DISPLAY_NAMES.get(name, name.replace("_", " ")),
+        "lat": info.get("latitude"), "lon": info.get("longitude"),
         "g": g, "times": times, "clim": climatology(tr if len(tr) >= 24 else g),
         "median": tr[FEATS].median().values if len(tr) else g[FEATS].median().values,
         "status": "ok" if tail >= WIN else "limited",
@@ -194,6 +201,9 @@ def stations():
             live = live_station(s["id"], s["lat"], s["lon"])
             status = live_status(live)
             result.update(status)
+            coordinates = (live["location"] or {}).get("coordinates") or {}
+            result["lat"] = coordinates.get("latitude", result["lat"])
+            result["lon"] = coordinates.get("longitude", result["lon"])
             result["status"] = "ok" if status["forecastMethod"] == "model" else "limited"
             result["hoursOfData"] = status["liveHours"]
             result["lastReadingAt"] = status["lastReadingAt"] or iso(s["times"][-1])
@@ -279,6 +289,28 @@ class WhatIf(BaseModel):
     particles: Optional[float] = None
 
 
+class ChatTurn(BaseModel):
+    role: Literal["user", "model"]
+    text: str = Field(min_length=1, max_length=1000)
+
+
+class ChatRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=1000)
+    history: list[ChatTurn] = Field(default_factory=list, max_length=8)
+    adultConfirmed: bool = False
+
+
+def enforce_chat_rate_limit(client_id):
+    now = time.monotonic()
+    with _chat_lock:
+        requests = _chat_requests[client_id]
+        while requests and now - requests[0] >= 60:
+            requests.popleft()
+        if len(requests) >= 10:
+            raise HTTPException(429, "Chat rate limit reached. Try again in a minute.")
+        requests.append(now)
+
+
 @api.post("/whatif/{sid}")
 def whatif(sid: str, body: WhatIf):
     s = get_station(sid)
@@ -292,6 +324,27 @@ def whatif(sid: str, body: WhatIf):
     return run_forecast(s, body.model_dump(), live=live)
 
 
+@api.post("/chat")
+def chat(body: ChatRequest, request: Request):
+    if not body.adultConfirmed:
+        raise HTTPException(403, {"code": "adult_confirmation_required", "message": "The FYP assistant is available only to users aged 18 or older."})
+    if not os.environ.get("GEMINI_API_KEY", "").strip():
+        raise HTTPException(503, {"code": "chat_not_configured", "message": "The FYP assistant is not configured."})
+    client_id = request.client.host if request.client else "unknown"
+    enforce_chat_rate_limit(client_id)
+    try:
+        answer = generate_fyp_answer(
+            body.message,
+            [turn.model_dump() for turn in body.history],
+        )
+    except ChatQuotaError as exc:
+        raise HTTPException(429, {"code": exc.code, "message": str(exc)}) from exc
+    except ChatProviderError as exc:
+        logger.warning("FYP assistant request failed (%s): %s", exc.code, exc)
+        raise HTTPException(exc.status_code, {"code": exc.code, "message": str(exc)}) from exc
+    return {"answer": answer}
+
+
 @api.get("/accuracy/{sid}")
 def accuracy(sid: str, horizon: int = 1):
     s = get_station(sid)
@@ -299,10 +352,12 @@ def accuracy(sid: str, horizon: int = 1):
     if not st or st.get("status") != "ok" or str(horizon) not in st["horizons"]:
         return {"status": "limited"}
     h = st["horizons"][str(horizon)]
+    comparison = h.get("comparison")
     return {"status": "ok", "r2": h["r2"], "rmse": h["rmse"], "mae": h["mae"], "classHit": h["classHit"],
-            "n": h["n"], "baselines": {"persistence": h["persistence"], "yesterday": h["yesterday"]},
-            "beatsPersistence": h["rmse"] < h["persistence"],
-            "beatsYesterday": h["yesterday"] is not None and h["rmse"] < h["yesterday"],
+            "n": h["n"], "comparisonN": h.get("comparisonN", h["n"]), "comparison": comparison,
+            "baselines": {"persistence": h["persistence"], "yesterday": h["yesterday"]},
+            "beatsPersistence": comparison is not None and comparison["model"]["rmse"] < comparison["persistence"]["rmse"],
+            "beatsYesterday": comparison is not None and comparison["model"]["rmse"] < comparison["yesterday"]["rmse"],
             "series": [{**p, "lo": round(max(0, p["forecast"] - h["rmse"])), "hi": round(p["forecast"] + h["rmse"])}
                        for p in h["series"]]}
 

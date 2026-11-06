@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { Nav } from '@/components/Nav';
+import { Chatbot } from '@/components/Chatbot';
 import { IS_MOCK, getStations } from '@/lib/api';
 
 export function Shell({ children }) {
@@ -19,6 +20,7 @@ export function Shell({ children }) {
           )}
         </div>
       </footer>
+      <Chatbot />
     </div>
   );
 }

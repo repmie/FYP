@@ -12,6 +12,21 @@ import { aqiCategory, categoryColor } from '@/lib/aqi';
 
 function range(points, key) { const v = points.map((p) => p[key]); return [Math.min(...v), Math.max(...v)]; }
 const norm = (v, a, b) => (b === a ? 0 : ((v - a) / (b - a)) * 3.2 - 1.6);
+const COLUMN_LABELS = {
+  'PM2.5': 'PM2.5',
+  PM1: 'PM1',
+  Humidity: 'Humidity',
+  Temperature: 'Temp.',
+  'Particle count': 'Particles',
+};
+
+function strength(value) {
+  const magnitude = Math.abs(value);
+  if (magnitude >= 0.7) return 'strong';
+  if (magnitude >= 0.4) return 'moderate';
+  if (magnitude >= 0.2) return 'weak';
+  return 'very weak';
+}
 
 function RealCloud({ points, x, y, z }) {
   const geo = useMemo(() => {
@@ -89,27 +104,60 @@ export default function CorrelationLab() {
   const { cols, matrix, points } = data;
   const ci = (name) => cols.indexOf(name);
   const pair = (a, b) => matrix[ci(a)][ci(b)];
+  const pm25Relationships = cols
+    .filter((name) => name !== 'PM2.5')
+    .map((name) => ({ name, value: pair('PM2.5', name) }))
+    .sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
+  const strongestPm25Relationship = pm25Relationships[0];
 
   return (
     <Shell>
       <PageHeader
         title="Correlation Lab"
-        purpose="Explore how the measurements relate to each other in 3D. Correlation measures how strongly two readings move together, from −1 to +1."
+        purpose="See which sensor readings tend to change together. Start with the plain-language summary, then explore the chart and matrix."
         action={<PillSelect value={mode} onChange={setMode} options={[{ value: 'real', label: 'Real data' }, { value: 'sim', label: 'Simulator' }]} testid="corr-mode" />}
         testid="corr-header"
       />
+
+      {mode === 'real' ? (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6" data-testid="correlation-summary">
+          <Card className="p-4">
+            <p className="text-xs text-muted-foreground">Strongest link with PM2.5</p>
+            <p className="text-lg font-semibold mt-1">{strongestPm25Relationship.name}</p>
+            <p className="text-sm text-muted-foreground mt-1">
+              {strength(strongestPm25Relationship.value)} {strongestPm25Relationship.value >= 0 ? 'move together' : 'move in opposite directions'}
+            </p>
+          </Card>
+          <Card className="p-4">
+            <p className="text-xs text-muted-foreground">Correlation score</p>
+            <p className="text-lg font-semibold tnum mt-1">{strongestPm25Relationship.value > 0 ? '+' : ''}{strongestPm25Relationship.value.toFixed(2)}</p>
+            <p className="text-sm text-muted-foreground mt-1">Closer to ±1 means a stronger relationship; closer to 0 means a weaker one.</p>
+          </Card>
+          <Card className="p-4">
+            <p className="text-xs text-muted-foreground">What this does not mean</p>
+            <p className="text-sm font-medium mt-1">Correlation is not cause and effect.</p>
+            <p className="text-sm text-muted-foreground mt-1">A link alone cannot tell us what caused a change.</p>
+          </Card>
+        </div>
+      ) : (
+        <Card className="p-4 mb-6 border-blue-200 bg-blue-50" data-testid="simulator-note">
+          <p className="text-sm font-medium">Practice mode — these dots are generated, not sensor readings.</p>
+          <p className="text-sm text-muted-foreground mt-1">Adjust the score below to see how two example variables can move together or in opposite directions.</p>
+        </Card>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-4">
           <Card className="p-3">
             <div className="rounded-lg overflow-hidden" style={{ height: 460, background: '#F3F4F6' }} data-testid="corr-canvas">
-              <Scene autoRotate={autoRotate} labels={mode === 'real' ? axes : { x: 'X', y: 'Y', z: 'Z' }}>
+              <Scene autoRotate={autoRotate} labels={mode === 'real' ? axes : { x: 'Variable A', y: 'Variable B', z: 'Unrelated' }}>
                 {mode === 'real' ? <RealCloud points={points} x={axes.x} y={axes.y} z={axes.z} /> : <SynthCloud r={r} />}
               </Scene>
             </div>
             <div className="flex flex-wrap items-center gap-3 px-2 py-2">
               <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={autoRotate} onChange={(e) => setAutoRotate(e.target.checked)} data-testid="auto-rotate" /> Auto-rotate</label>
               <span className="text-xs text-muted-foreground">Drag to rotate · scroll to zoom</span>
+              {mode === 'real' && <span className="text-xs text-muted-foreground">Each dot is one of {points.length.toLocaleString()} sampled hourly readings; color shows AQI category. Axis positions are scaled for display.</span>}
             </div>
           </Card>
 
@@ -130,7 +178,7 @@ export default function CorrelationLab() {
                   </div>
                 ))}
               </div>
-              <div className="mt-4 flex flex-wrap gap-3 text-xs text-muted-foreground">
+              <div className="mt-4 flex flex-wrap gap-3 text-xs text-muted-foreground" aria-label="AQI category colors">
                 {['Good', 'Moderate', 'Unhealthy for Sensitive Groups', 'Unhealthy', 'Very Unhealthy', 'Hazardous'].map((c) => (
                   <span key={c} className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full ring-1 ring-black/10" style={{ background: categoryColor(c) }} /> {c}</span>
                 ))}
@@ -140,26 +188,30 @@ export default function CorrelationLab() {
             <Card className="p-4">
               <div className="flex justify-between text-sm mb-2"><span>Correlation r</span><span className="tnum font-medium">{r.toFixed(2)}</span></div>
               <Slider value={[r]} min={-1} max={1} step={0.01} onValueChange={(v) => setR(v[0])} data-testid="r-slider" />
-              <p className="text-sm text-muted-foreground mt-3">At r = 1 the cloud is a tight line (perfectly linked). At r = 0 it is a shapeless ball (no link). Negative values slope the other way.</p>
+              <p className="text-sm text-muted-foreground mt-3">+1 means the variables move together, 0 means no clear relationship, and −1 means they move in opposite directions.</p>
             </Card>
           )}
         </div>
 
         <div className="space-y-4">
+          {mode === 'real' ? (
+            <>
           <Card className="p-4">
-            <h3 className="text-[16px] font-semibold mb-3">Correlation matrix</h3>
+            <h3 className="text-[16px] font-semibold">Correlation matrix</h3>
+            <p className="text-xs text-muted-foreground mt-1 mb-3">Each cell compares the row and column readings. Tap a value to plot that pair.</p>
             <div className="overflow-x-auto">
               <table className="text-xs tnum border-collapse">
-                <thead><tr><th></th>{cols.map((c) => <th key={c} className="p-1 font-medium text-muted-foreground align-bottom" style={{ writingMode: 'vertical-rl' }}>{c}</th>)}</tr></thead>
+                <thead><tr><th></th>{cols.map((c) => <th key={c} className="p-1 font-medium text-muted-foreground text-center" title={c}>{COLUMN_LABELS[c] || c}</th>)}</tr></thead>
                 <tbody>
                   {cols.map((rowC, ri) => (
                     <tr key={rowC}>
-                      <td className="p-1 pr-2 font-medium text-muted-foreground whitespace-nowrap">{rowC}</td>
+                      <td className="p-1 pr-2 font-medium text-muted-foreground whitespace-nowrap" title={rowC}>{COLUMN_LABELS[rowC] || rowC}</td>
                       {cols.map((colC, cidx) => (
                         <td key={colC} className="p-0.5">
                           <button
                             onClick={() => setAxes({ ...axes, x: rowC, y: colC })}
                             data-testid={`corr-cell-${ri}-${cidx}`}
+                            aria-label={`${rowC} and ${colC}: correlation ${matrix[ri][cidx].toFixed(2)}. Click to plot this pair.`}
                             className="w-10 h-9 rounded text-[11px] font-medium hover:ring-2 hover:ring-primary transition-all"
                             style={{ background: cellColor(matrix[ri][cidx]) }}
                           >{matrix[ri][cidx].toFixed(2)}</button>
@@ -170,16 +222,25 @@ export default function CorrelationLab() {
                 </tbody>
               </table>
             </div>
-            <p className="text-[11px] text-muted-foreground mt-2">Click any cell to set it as the X and Y axes.</p>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-3 text-xs text-muted-foreground" data-testid="correlation-legend">
+              <span>−1 opposite</span>
+              <span className="inline-flex items-center gap-1"><span className="w-3 h-3 rounded-sm" style={{ background: cellColor(-0.7) }} /> Negative</span>
+              <span className="inline-flex items-center gap-1"><span className="w-3 h-3 rounded-sm border border-border" style={{ background: cellColor(0) }} /> Little/no link</span>
+              <span className="inline-flex items-center gap-1"><span className="w-3 h-3 rounded-sm" style={{ background: cellColor(0.7) }} /> Positive</span>
+              <span>+1 together</span>
+            </div>
           </Card>
           <Card className="p-4">
-            <h3 className="text-[16px] font-semibold mb-2">In plain words</h3>
-            <ul className="space-y-1.5 text-sm">
-              <li>PM2.5 and PM1 move together strongly (r = {pair('PM2.5', 'PM1').toFixed(2)}).</li>
-              <li>Humidity and temperature move in opposite directions (r = {pair('Humidity', 'Temperature').toFixed(2)}).</li>
-              <li>PM2.5 and particle count move together (r = {pair('PM2.5', 'Particle count').toFixed(2)}).</li>
-            </ul>
+            <h3 className="text-[16px] font-semibold mb-2">Reading the score</h3>
+            <p className="text-sm text-muted-foreground">Positive values mean readings tend to rise or fall together. Negative values mean one tends to rise when the other falls. A correlation shows an association, not proof that one reading caused the other.</p>
           </Card>
+            </>
+          ) : (
+            <Card className="p-4">
+              <h3 className="text-[16px] font-semibold mb-2">What the simulator shows</h3>
+              <p className="text-sm text-muted-foreground">The slider controls the relationship between Variable A and Variable B. Positive scores slope upward, negative scores slope downward, and scores near zero look more scattered. The third axis is random.</p>
+            </Card>
+          )}
         </div>
       </div>
     </Shell>

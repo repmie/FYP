@@ -4,12 +4,10 @@ import { fmtKLTime, fmtKLDateTime } from '@/lib/time';
 
 const LINKS = [
   { to: '/', label: 'Home', end: true },
-  { to: '/forecast', label: 'Forecast' },
   { to: '/what-if', label: 'What-if & Risk' },
-  { to: '/accuracy', label: 'Accuracy' },
+  { to: '/accuracy', label: 'Accuracy & Method' },
   { to: '/correlation', label: 'Correlation Lab' },
   { to: '/data', label: 'Data & Files' },
-  { to: '/about', label: 'About & Method' },
 ];
 
 export function Nav({ latestReadingAt }) {

@@ -7,7 +7,14 @@ import { MapView } from '@/components/MapView';
 import { StationPanel } from '@/components/StationPanel';
 import { getStations, getCurrent, getForecast, STATIONS } from '@/lib/api';
 import { pointsWindowText } from '@/lib/time';
+import { aqiCategory } from '@/lib/aqi';
 import { ArrowUp, ArrowDown, Minus } from 'lucide-react';
+
+const klHour = (time) => parseInt(new Intl.DateTimeFormat('en-GB', {
+  timeZone: 'Asia/Kuala_Lumpur',
+  hour: '2-digit',
+  hour12: false,
+}).format(new Date(time)), 10);
 
 export default function Home() {
   const [selectedId, setSelectedId] = useState(STATIONS[0].id);
@@ -59,6 +66,22 @@ export default function Home() {
   }
 
   const selStation = stationsQ.data?.find((s) => s.id === selectedId);
+  const selectedForecast = forecastsQ.data?.[selectedId];
+  const forecastPoints = selectedForecast?.points || [];
+  const confidenceRows = ['High', 'Medium', 'Low'].map((confidence) => {
+    const hours = forecastPoints.filter((point) => point.confidence === confidence).map((point) => point.hourAhead);
+    return {
+      confidence,
+      hours: hours.length ? `Hours ${Math.min(...hours)}–${Math.max(...hours)}` : null,
+    };
+  }).filter((row) => row.hours);
+  const commutePoints = forecastPoints.filter((point) => {
+    const hourOfDay = klHour(point.time);
+    return hourOfDay >= 7 && hourOfDay <= 9;
+  });
+  const commuteAqi = commutePoints.length
+    ? Math.round(commutePoints.reduce((total, point) => total + point.aqi, 0) / commutePoints.length)
+    : null;
 
   return (
     <div className="space-y-8" data-testid="home-page">
@@ -102,6 +125,49 @@ export default function Home() {
               <StationPanel station={selStation} current={currentsQ.data[selectedId]} forecast={forecastsQ.data[selectedId]} />
             </div>
           </div>
+
+          {forecastPoints.length > 0 && (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6" data-testid="forecast-insights">
+              <Card className="p-6">
+                <h2 className="text-[20px] font-semibold mb-4">Forecast confidence & commute</h2>
+                <div className="rounded-lg border border-border p-3 mb-4">
+                  <p className="text-xs text-muted-foreground">7–9 AM commute average</p>
+                  <p className="text-[20px] font-semibold tnum mt-1">{commuteAqi ?? '—'}</p>
+                  {commuteAqi != null && <p className="text-xs text-muted-foreground">{aqiCategory(commuteAqi)} · AQI (PM2.5)</p>}
+                </div>
+                <h3 className="text-sm font-medium mb-2">Confidence by hour</h3>
+                {confidenceRows.length ? (
+                  <ul className="space-y-2 text-sm">
+                    {confidenceRows.map((row) => (
+                      <li key={row.confidence} className="flex justify-between" data-testid={`confidence-${row.confidence.toLowerCase()}`}>
+                        <span>{row.hours}</span>
+                        <span className={`font-medium ${row.confidence === 'High' ? 'text-green-700' : row.confidence === 'Medium' ? 'text-amber-600' : 'text-red-600'}`}>{row.confidence}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-sm text-muted-foreground">Confidence details are unavailable for this forecast.</p>
+                )}
+              </Card>
+              <Card className="p-6" data-testid="why-changing">
+                <h2 className="text-[20px] font-semibold mb-4">Why is it changing?</h2>
+                {selectedForecast?.drivers?.length ? (
+                  <ul className="space-y-3">
+                    {selectedForecast.drivers.map((driver, index) => (
+                      <li key={`${driver.feature}-${index}`} className="flex items-center gap-2 text-sm">
+                        {driver.effect === 'rising'
+                          ? <ArrowUp size={16} strokeWidth={1.5} className="text-red-500" />
+                          : <ArrowDown size={16} strokeWidth={1.5} className="text-green-600" />}
+                        <span>{driver.feature} — <span className="text-muted-foreground">{driver.effect === 'rising' ? 'pushing AQI up' : 'pulling AQI down'}</span></span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-sm text-muted-foreground">No model driver details are available for this forecast.</p>
+                )}
+              </Card>
+            </div>
+          )}
 
           <div>
             <h2 className="text-[20px] font-semibold mb-4">All stations</h2>

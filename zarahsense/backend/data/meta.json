@@ -2,7 +2,7 @@
   "task": "regression (PM2.5 jam seterusnya, ug/m3)",
   "model": "RandomForest",
   "best_params": {
-    "n_estimators": 300,
+    "n_estimators": 200,
     "min_samples_leaf": 1,
     "max_features": 0.3,
     "max_depth": 20
@@ -43,43 +43,43 @@
   "time_features": "sin/cos jam (dan bulan kalau ada) dikira dari timestamp, tidak diskala",
   "stations": [
     {
-      "station": "FMHS_Serdang",
-      "latitude": 2.978551122,
-      "longitude": 101.7174572,
-      "n_hours": 131
+      "station": "ENVIRO_EXCELTECH_SDN_BHD",
+      "latitude": 3.02072,
+      "longitude": 101.714186,
+      "n_hours": 2024
     },
     {
       "station": "KLCC",
       "latitude": 3.15665,
       "longitude": 101.70853,
-      "n_hours": 1019
+      "n_hours": 1397
     },
     {
       "station": "Sejati_Residences",
       "latitude": 2.913,
       "longitude": 101.640583,
-      "n_hours": 4736
+      "n_hours": 5114
     },
     {
       "station": "Setia_Eco_Park",
       "latitude": 3.1113299,
       "longitude": 101.476412,
-      "n_hours": 14777
+      "n_hours": 15155
     },
     {
       "station": "Taman_Tun_Dr_Ismail",
-      "latitude": 3.141110626,
-      "longitude": 101.6274985,
-      "n_hours": 14512
+      "latitude": 3.1411106257486976,
+      "longitude": 101.6274985267597,
+      "n_hours": 14890
     }
   ],
   "input_format": "flat (1, 216)",
   "output_note": "DL: output diskala 0-1, guna y_scaler.pkl inverse_transform. ML: terus ug/m3.",
   "test_metrics": {
     "Model": "RandomForest",
-    "R2": 0.9174,
-    "RMSE": 9.779,
-    "MAE": 5.9133,
-    "RMSE vs Linear (%)": -11.5888
+    "R2": 0.9383,
+    "RMSE": 8.066,
+    "MAE": 5.0267,
+    "RMSE vs Linear (%)": -3.9802
   }
 }
